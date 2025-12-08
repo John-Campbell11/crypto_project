@@ -100,7 +100,9 @@ def read_all_blocks(dat_path: str):
 
 if __name__ == "__main__":
     # NOTE: You MUST change this path to a valid blkNNNNN.dat file on your system
-    dat_file_path = "/Users/soupman/PycharmProjects/ScrapingBlockTransactions/blk01208.dat"
+    dat_file_path = ""
+
+    dat_file_path = input("Enter the path to a Bitcoin blkNNNNN.dat file (or press Enter to use default): ").strip()
     
     print(f"Attempting to read all blocks from: {dat_file_path}")
     blocks = read_all_blocks(dat_file_path)
