@@ -1,43 +1,23 @@
-# This file contains the main I/O logic and execution block.
+# This file contains the main I/O logic and execution block for parsing 
+# an obfuscated or plaintext Bitcoin .dat file, based on user input.
 
 # Import the class definition
 from block_class import SimpleBlock
-# The file-stream helper function is now defined locally to minimize imports
+# Import necessary utility functions
+from utilities import read_varint_from_stream, deobsfucate
 
-# --- Helper Function for VarInt Parsing from Stream (I/O) ---
+# --- Configuration: The Obfuscation Key ---
+# The key provided by the user: 5ac1d292e7350efe
+OBFUSCATION_KEY = bytes.fromhex("5ac1d292e7350efe")
 
-def read_varint_from_stream(f):
+
+# --- Main I/O Logic ---
+
+def read_all_blocks(dat_path: str, is_obfuscated: bool = False):
     """
-    Reads a variable-length integer (VarInt) from the file stream.
-    This is used to determine the count of transactions from the file stream.
-    Returns the integer value. Note: This function moves the file pointer.
-    """
-    first_byte = f.read(1)
-    if not first_byte:
-        return 0
-        
-    value = first_byte[0]
-    
-    if value < 0xfd:
-        # 1-byte VarInt (Value is 0x00 to 0xFC)
-        return value
-    elif value == 0xfd:
-        # 3-byte VarInt (Value is next 2 bytes)
-        return int.from_bytes(f.read(2), "little")
-    elif value == 0xfe:
-        # 5-byte VarInt (Value is next 4 bytes)
-        return int.from_bytes(f.read(4), "little")
-    elif value == 0xff:
-        # 9-byte VarInt (Value is next 8 bytes)
-        return int.from_bytes(f.read(8), "little")
-    return 0
-
-
-def read_all_blocks(dat_path: str):
-    """
-    Reads ALL blocks from a Bitcoin .dat file and
-    returns them as a list of SimpleBlock objects.
-    The loop continues until EOF is reached.
+    Reads ALL blocks from a Bitcoin .dat file.
+    If 'is_obfuscated' is True, it decrypts the block payload using OBFUSCATION_KEY.
+    Returns them as a list of SimpleBlock objects.
     """
     blocks = []
 
@@ -53,88 +33,96 @@ def read_all_blocks(dat_path: str):
                 # --- Read block size (4 bytes, little-endian) ---
                 size_bytes = f.read(4)
                 if len(size_bytes) < 4:
-                    f.seek(magic_start_pos) # Rewind if partial read
+                    f.seek(magic_start_pos) 
                     break
                 block_size = int.from_bytes(size_bytes, "little")
 
-                # --- Read header (80 bytes) ---
-                header = f.read(80)
-                if len(header) < 80:
+                # --- Read raw header (80 bytes) ---
+                raw_header = f.read(80)
+                if len(raw_header) < 80:
                     f.seek(magic_start_pos)
                     break 
 
                 # --- Read transaction count (varint) and calculate its size ---
                 varint_start_pos = f.tell()
-                # Use the I/O specific varint reader
                 tx_count = read_varint_from_stream(f) 
                 
-                # We need to know how many bytes read_varint consumed (1, 3, 5, or 9)
+                # NOTE: The VarInt *must* be read before the transactions data 
+                # because the stream pointer needs to be moved past the VarInt.
                 bytes_read_for_varint = f.tell() - varint_start_pos
                 
                 if bytes_read_for_varint == 0:
                     f.seek(magic_start_pos)
                     break 
 
-                # The remaining data size is the block_size minus the 80-byte header 
-                # and the actual number of bytes used by the VarInt.
+                # Calculate the exact size of the remaining transactions payload
                 remaining_data_size = block_size - 80 - bytes_read_for_varint
 
-                # --- Read remaining transactions data (as a single chunk) ---
-                transactions_data_chunk = f.read(remaining_data_size)
-                if len(transactions_data_chunk) < remaining_data_size:
+                # --- Read remaining transactions data chunk ---
+                raw_transactions_data_chunk = f.read(remaining_data_size)
+                if len(raw_transactions_data_chunk) < remaining_data_size:
                     print(f"Warning: Corrupted block detected at block #{len(blocks) + 1}. Skipping.")
-                    break  # Corrupted block data
+                    break
 
-                # --- Create SimpleBlock object ---
-                block = SimpleBlock(header, transactions_data_chunk) 
+                # --- DEOBFUSCATION / ASSIGNMENT STEP (Conditional Logic) ---
+                if is_obfuscated:
+                    # 1. Combine the raw header and the raw transactions data chunk 
+                    #    into a single payload for decryption.
+                    obfuscated_payload = raw_header + raw_transactions_data_chunk
+
+                    # 2. Decrypt the entire block payload using the key.
+                    decrypted_payload = deobsfucate(obfuscated_payload, OBFUSCATION_KEY)
+
+                    # 3. Split the decrypted payload back into its components.
+                    decrypted_header = decrypted_payload[:80]
+                    decrypted_transactions_data_chunk = decrypted_payload[80:]
+                else:
+                    # Use raw data directly if not obfuscated
+                    decrypted_header = raw_header
+                    decrypted_transactions_data_chunk = raw_transactions_data_chunk
+
+                # --- Create SimpleBlock object with decrypted data ---
+                block = SimpleBlock(decrypted_header, decrypted_transactions_data_chunk) 
                 blocks.append(block)
-
+    
     except FileNotFoundError:
         print(f"Error: The file path '{dat_path}' was not found.")
     except Exception as e:
-        # Added general exception handling for robustness during file reading
         print(f"An unexpected error occurred during block parsing: {e}")
 
     return blocks
 
 
 if __name__ == "__main__":
-    # NOTE: You MUST change this path to a valid blkNNNNN.dat file on your system
-    dat_file_path = ""
+    
+    dat_file_path = input("Enter the path to a Bitcoin blkNNNNN.dat file: ").strip()
+    
+    if not dat_file_path:
+        print("No file path provided. Exiting.")
+        exit()
+        
+    # --- New User Prompt for Obfuscation ---
+    obfuscation_input = input("Is the file obfuscated (y/n)? ").strip().lower()
+    is_obfuscated = obfuscation_input in ('y', 'yes')
 
-    dat_file_path = input("Enter the path to a Bitcoin blkNNNNN.dat file (or press Enter to use default): ").strip()
+    mode_description = "reading and decrypting" if is_obfuscated else "reading (plaintext)"
+    print(f"Attempting {mode_description} all blocks from: {dat_file_path}")
     
-    print(f"Attempting to read all blocks from: {dat_file_path}")
-    blocks = read_all_blocks(dat_file_path)
-
-    print(f"\nSuccessfully loaded {len(blocks)} blocks from the file.\n")
-    
-    """
-    # Print summary of the first 10 blocks found
-    for i, block in enumerate(blocks[:10], start=0):
-        tx_count = len(block.transactions)
+    # We wrap the main reading logic in a try/except block for better error messaging
+    try:
+        # Pass the boolean flag to the reading function
+        blocks = read_all_blocks(dat_file_path, is_obfuscated=is_obfuscated)
+        print(f"\nSuccessfully loaded {len(blocks)} blocks from the file.\n")
         
-        # Calculate total value of outputs in the first transaction (Coinbase tx)
-        coinbase_tx = block.transactions[0]
-        total_output_value = sum(txout.value for txout in coinbase_tx.vouts)
+        if blocks:
+            print(blocks[0])  # Print the first block's details as a sample
+            block0_transactions = blocks[0].transactions
+            print(f"\nFirst block contains {len(block0_transactions)} transactions.\n")
+            
+            for tx in block0_transactions[:3]:  # Print first 3 transactions of block 0
+                print(tx)
         
-        # Extract the first 8 characters (4 bytes) and the last 8 characters (4 bytes)
-        full_hash = block.hash
-        if len(full_hash) >= 8:
-            display_hash = f"{full_hash[:5]}-{full_hash[-5:]}"
-        else:
-            display_hash = full_hash # Fallback if hash is somehow too short
-        
-        print(f"Block {i}: Hash = {display_hash}, Time={block.timestamp.strftime('%Y-%m-%d %H:%M:%S')}, Tx Count={tx_count}")
-        print(f"  > Coinbase Tx ID: {coinbase_tx.txid[:10]}... ({len(coinbase_tx.vins)} In, {len(coinbase_tx.vouts)} Out)")
-        print(f"  > Total Block Reward/Fees (Output Sum): {total_output_value / 10**8:.8f} BTC")
-    
-    if len(blocks) > 10:
-        print(f"\n... and {len(blocks) - 10} more blocks.")
-    """
-        
-    print(blocks[0])  # Print the first block's details as a sample
-    block0_transactions = blocks[0].transactions
-    print(f"\nFirst block contains {len(block0_transactions)} transactions.\n")
-    for tx in block0_transactions[:3]:  # Print first 3 transactions of block 0
-        print(tx)
+    except FileNotFoundError:
+        print(f"Error: The file '{dat_file_path}' was not found. Please check the path.")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
