@@ -145,13 +145,8 @@ if __name__ == "__main__":
         blocks = read_all_blocks(dat_file_path, is_obfuscated=is_obfuscated)
         print(f"\nSuccessfully loaded {len(blocks)} blocks from the file.\n")
         
-        if blocks:
-            # Display information for Block #1 (the Genesis Block)
-            print(f"--- SIMPLE BLOCK ---\n"
-                  f"Block Hash: {blocks[0].hash}\n"
-                  f"Timestamp: 2009-01-03 12:15:05\n"
-                  f"Transaction Count: {len(blocks[0].transactions)}\n")
-            
+        for block in blocks:
+            print(block)
     except FileNotFoundError:
         print(f"Error: The file '{dat_file_path}' was not found. Please check the path.")
     except Exception as e:
