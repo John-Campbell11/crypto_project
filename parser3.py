@@ -17,7 +17,7 @@ def get_db_connection():
         conn = psycopg2.connect(
             dbname="bitcoin_0",
             user="john",
-            password="",
+            password="john",
             host="localhost",
             port=5432
         )
