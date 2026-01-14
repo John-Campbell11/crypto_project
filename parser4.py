@@ -8,7 +8,7 @@ import os
 # --- Configuration ---
 OBFUSCATION_KEY = bytes.fromhex("5ac1d292e7350efe")
 KEY_LENGTH = len(OBFUSCATION_KEY)
-BATCH_SIZE = 5000  # Adjust for memory / speed
+BATCH_SIZE = 5000
 DAT_DIR = "/home/btc-user/.bitcoin/blocks/"
 MAX_FILES = 10
 
@@ -51,7 +51,7 @@ def get_script_type(script_pubkey: bytes) -> str:
     else:
         return "unknown"
 
-# --- Transaction parser ---
+# --- Transaction parser (SegWit-aware) ---
 def parse_transaction(data: bytes, offset: int):
     start = offset
     version = struct.unpack("<I", data[offset:offset+4])[0]
@@ -62,7 +62,7 @@ def parse_transaction(data: bytes, offset: int):
         segwit = True
         offset += 2  # skip marker + flag
 
-    # Inputs
+    # --- Inputs ---
     input_count, size = read_varint(data, offset)
     offset += size
     inputs = []
@@ -73,12 +73,12 @@ def parse_transaction(data: bytes, offset: int):
         offset += 4
         script_len, size = read_varint(data, offset)
         offset += size
-        offset += script_len  # skip scriptSig entirely
+        offset += script_len  # skip scriptSig
         sequence = struct.unpack("<I", data[offset:offset+4])[0]
         offset += 4
         inputs.append({'prev_hash': prev_hash, 'prev_index': prev_index})
 
-    # Outputs
+    # --- Outputs ---
     output_count, size = read_varint(data, offset)
     offset += size
     outputs = []
@@ -91,7 +91,7 @@ def parse_transaction(data: bytes, offset: int):
         offset += script_len
         outputs.append({'value': value, 'script_pubkey': script_pubkey})
 
-    # Skip witness data
+    # --- Witness (skip) ---
     if segwit:
         for _ in inputs:
             wit_count, size = read_varint(data, offset)
@@ -100,20 +100,34 @@ def parse_transaction(data: bytes, offset: int):
                 item_len, size = read_varint(data, offset)
                 offset += size + item_len
 
-    # Locktime
+    # --- Locktime ---
     locktime = struct.unpack("<I", data[offset:offset+4])[0]
     offset += 4
 
-    # txid (without witness)
+    # --- txid calculation ---
     if segwit:
-        non_wit_tx = data[start:start+4] + data[start+6:offset]
-        txid = double_sha256(non_wit_tx)[::-1]
+        # remove marker+flag and witness bytes for txid
+        tx_bytes = bytearray()
+        tx_bytes += data[start:start+4]  # version
+        # inputs + outputs (skip marker+flag and witness)
+        in_start = start + 6  # version + marker + flag
+        tx_bytes += data[in_start:offset - 4]  # everything except locktime is included
+        tx_bytes += data[offset-4:offset]  # locktime
+        txid = double_sha256(tx_bytes)[::-1]
     else:
         txid = double_sha256(data[start:offset])[::-1]
 
-    # Coinbase detection
+    # --- Coinbase detection ---
     is_coinbase = (inputs[0]['prev_hash'] == b'\x00'*32 and inputs[0]['prev_index'] == 0xFFFFFFFF)
-    return {'txid': txid, 'version': version, 'inputs': inputs, 'outputs': outputs, 'locktime': locktime, 'is_coinbase': is_coinbase}, offset-start
+
+    return {
+        'txid': txid,
+        'version': version,
+        'inputs': inputs,
+        'outputs': outputs,
+        'locktime': locktime,
+        'is_coinbase': is_coinbase
+    }, offset - start
 
 # --- Bulk insertion ---
 def bulk_insert(cursor, blocks, txs, outputs, inputs):
@@ -134,7 +148,7 @@ def bulk_insert(cursor, blocks, txs, outputs, inputs):
         inputs
     )
 
-# --- Process single .dat file ---
+# --- Process a .dat file ---
 def process_dat_file(fpath, conn):
     cursor = conn.cursor()
     file_pos = 0
@@ -159,16 +173,15 @@ def process_dat_file(fpath, conn):
             block_data = deobfuscate_stream(block_data_enc, file_pos)
             file_pos += block_size
 
-            # Block header
+            # --- Block header ---
             header = block_data[:80]
             block_hash = double_sha256(header)[::-1]
             prev_block = header[4:36][::-1]
             timestamp = struct.unpack("<I", header[68:72])[0]
-
             blocks_batch.append((block_hash, prev_block, timestamp, False))
             total_blocks += 1
 
-            # Transactions
+            # --- Transactions ---
             offset = 80
             tx_count, size = read_varint(block_data, offset)
             offset += size
@@ -193,7 +206,7 @@ def process_dat_file(fpath, conn):
                         prev_vout = inp['prev_index']
                     inputs_batch.append((tx['txid'], vin, prev_txid, prev_vout))
 
-            # Bulk insert
+            # --- Bulk insert ---
             if len(blocks_batch) >= BATCH_SIZE:
                 bulk_insert(cursor, blocks_batch, txs_batch, outputs_batch, inputs_batch)
                 conn.commit()
@@ -202,7 +215,7 @@ def process_dat_file(fpath, conn):
                 outputs_batch.clear()
                 inputs_batch.clear()
 
-    # Insert remaining batches
+    # Remaining batches
     if blocks_batch:
         bulk_insert(cursor, blocks_batch, txs_batch, outputs_batch, inputs_batch)
         conn.commit()
@@ -211,16 +224,14 @@ def process_dat_file(fpath, conn):
 
 # --- Main ---
 def main():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[:MAX_FILES]
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[3500:3500 + MAX_FILES]
     conn = get_db_connection()
     total_blocks = 0
-
     for fpath in dat_files:
         print(f"Processing {fpath}...")
         blocks_in_file = process_dat_file(fpath, conn)
         total_blocks += blocks_in_file
         print(f"Finished {fpath}, {blocks_in_file} blocks added. Total so far: {total_blocks}")
-
     conn.close()
     print(f"Done. Total blocks imported: {total_blocks}")
 
