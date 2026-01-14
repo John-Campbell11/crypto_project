@@ -204,5 +204,5 @@ def read_all_blocks_to_sql(dat_path: str):
     print("Finished importing all blocks.")
 
 if __name__ == "__main__":
-    dat_file = "/home/btc-user/.bitcoin/blocks/blk00000.dat"
+    dat_file = "/home/btc-user/.bitcoin/blocks/blk00001.dat"
     read_all_blocks_to_sql(dat_file)
