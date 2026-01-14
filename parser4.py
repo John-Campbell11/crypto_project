@@ -14,7 +14,7 @@ MAX_FILES = 10
 
 def get_db_connection():
     return psycopg2.connect(
-        dbname="bitcoin_0",
+        dbname="bitcoin_proto",
         user="john",
         password="john",
         host="localhost",
