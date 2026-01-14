@@ -5,7 +5,6 @@ import hashlib
 import glob
 import os
 import mmap
-from io import StringIO
 
 # --- Configuration ---
 OBFUSCATION_KEY = bytes.fromhex("5ac1d292e7350efe")
@@ -139,49 +138,57 @@ def parse_transaction_fast(data: memoryview, offset: int):
 
     return (txid, version, inputs, outputs, locktime, is_coinbase, segwit), offset - start
 
-# --- Bulk insert using COPY ---
+# --- Bulk insert using optimized execute_values ---
 def bulk_insert_fast(cursor, blocks, txs, outputs, inputs):
-    def write_block(sio):
-        for b in blocks:
-            sio.write(f"\\x{b[0].hex()}\t\\x{b[1].hex()}\t{b[2]}\t{b[3]}\n")
-
-    def write_tx(sio):
-        for t in txs:
-            sio.write(f"\\x{t[0].hex()}\t\\x{t[1].hex()}\t{t[2]}\n")
-
-    def write_outputs(sio):
-        for o in outputs:
-            sio.write(f"\\x{o[0].hex()}\t{o[1]}\t{o[2]}\t\\x{o[3].hex()}\t{o[4]}\n")
-
-    def write_inputs(sio):
-        for i in inputs:
-            prev_txid = f"\\x{i[2].hex()}" if i[2] else "\\N"
-            prev_vout = str(i[3]) if i[3] is not None else "\\N"
-            sio.write(f"\\x{i[0].hex()}\t{i[1]}\t{prev_txid}\t{prev_vout}\n")
+    """Optimized execute_values bulk insert for large batches of binary data"""
 
     if blocks:
-        sio = StringIO()
-        write_block(sio)
-        sio.seek(0)
-        cursor.copy_from(sio, 'blocks', columns=('hash', 'previous_block', 'timestamp', 'orphaned'), sep='\t')
+        execute_values(
+            cursor,
+            """
+            INSERT INTO blocks (hash, previous_block, timestamp, orphaned)
+            VALUES %s
+            ON CONFLICT (hash) DO NOTHING
+            """,
+            blocks,
+            template="(%s, %s, %s, %s)"
+        )
 
     if txs:
-        sio = StringIO()
-        write_tx(sio)
-        sio.seek(0)
-        cursor.copy_from(sio, 'transactions', columns=('txid', 'block_hash', 'is_coinbase'), sep='\t')
+        execute_values(
+            cursor,
+            """
+            INSERT INTO transactions (txid, block_hash, is_coinbase)
+            VALUES %s
+            ON CONFLICT (txid) DO NOTHING
+            """,
+            txs,
+            template="(%s, %s, %s)"
+        )
 
     if outputs:
-        sio = StringIO()
-        write_outputs(sio)
-        sio.seek(0)
-        cursor.copy_from(sio, 'outputs', columns=('txid', 'vout', 'value', 'script_pubkey', 'script_type'), sep='\t')
+        execute_values(
+            cursor,
+            """
+            INSERT INTO outputs (txid, vout, value, script_pubkey, script_type)
+            VALUES %s
+            ON CONFLICT (txid, vout) DO NOTHING
+            """,
+            outputs,
+            template="(%s, %s, %s, %s, %s)"
+        )
 
     if inputs:
-        sio = StringIO()
-        write_inputs(sio)
-        sio.seek(0)
-        cursor.copy_from(sio, 'inputs', columns=('txid', 'vin', 'prev_txid', 'prev_vout'), sep='\t')
+        execute_values(
+            cursor,
+            """
+            INSERT INTO inputs (txid, vin, prev_txid, prev_vout)
+            VALUES %s
+            ON CONFLICT (txid, vin) DO NOTHING
+            """,
+            inputs,
+            template="(%s, %s, %s, %s)"
+        )
 
 # --- Process a .dat file ---
 def process_dat_file_fast(fpath, conn):
