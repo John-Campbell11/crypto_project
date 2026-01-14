@@ -264,7 +264,7 @@ def process_dat_file_fast(fpath, conn):
 
 # --- Main ---
 def main():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[3500:3501]  # Adjust as needed
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[4000:4010]  # Adjust as needed
     conn = get_db_connection()
     total_blocks = 0
 
