@@ -243,7 +243,7 @@ def process_dat_file(fpath, conn):
 
 # --- Main ---
 def main():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[3500:3500 + MAX_FILES]
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[3500:3501]
     conn = get_db_connection()
     total_blocks = 0
     for fpath in dat_files:
