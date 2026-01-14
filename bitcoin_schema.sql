@@ -21,7 +21,7 @@ CREATE TABLE inputs (
     prev_vout       INTEGER,            -- NULL for coinbase
     script_sig      BYTEA,
     PRIMARY KEY (txid, vin),
-    FOREIGN KEY (prev_txid, prev_vout) REFERENCES outputs(txid, vout)
+    FOREIGN KEY (prev_txid, prev_vout) 
 );
 
 CREATE TABLE outputs (
