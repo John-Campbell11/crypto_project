@@ -40,29 +40,41 @@ def read_varint(data, offset):
 def double_sha256(data: bytes) -> bytes:
     return hashlib.sha256(hashlib.sha256(data).digest()).digest()
 
-# --- Script type detection ---
 def get_script_type(script_pubkey: bytes) -> str:
-    if len(script_pubkey) == 25 and script_pubkey[0] == 0x76 and script_pubkey[1] == 0xa9 and script_pubkey[-2] == 0x88 and script_pubkey[-1] == 0xac:
+    l = len(script_pubkey)
+    if l == 25 and script_pubkey.startswith(b'\x76\xa9') and script_pubkey.endswith(b'\x88\xac'):
         return "P2PKH"
-    elif len(script_pubkey) == 23 and script_pubkey[0] == 0xa9 and script_pubkey[-1] == 0x87:
+    if l == 23 and script_pubkey.startswith(b'\xa9') and script_pubkey.endswith(b'\x87'):
         return "P2SH"
-    elif len(script_pubkey) in [22, 34] and script_pubkey[0] == 0x00:
-        return "P2WPKH/P2WSH"
-    else:
-        return "unknown"
+    if l == 22 and script_pubkey.startswith(b'\x00\x14'):
+        return "P2WPKH"
+    if l == 34 and script_pubkey.startswith(b'\x00\x20'):
+        return "P2WSH"
+    if l == 34 and script_pubkey.startswith(b'\x51\x20'):
+        return "P2TR" # Taproot (SegWit v1)
+    if script_pubkey.startswith(b'\x6a'):
+        return "OP_RETURN"
+    return "unknown"
 
-# --- Transaction parser (SegWit-aware) ---
 def parse_transaction(data: bytes, offset: int):
     start = offset
-    version = struct.unpack("<I", data[offset:offset+4])[0]
+    
+    # 1. Version (4 bytes)
+    version_bytes = data[offset:offset+4]
+    version = struct.unpack("<I", version_bytes)[0]
     offset += 4
 
+    # 2. SegWit Marker & Flag Check
+    # If the marker is 0x00 and flag is 0x01, it is a SegWit transaction.
     segwit = False
     if data[offset] == 0x00 and data[offset+1] == 0x01:
         segwit = True
-        offset += 2  # skip marker + flag
+        offset += 2 
 
-    # --- Inputs ---
+    # --- Start of Legacy Body (Required for TXID) ---
+    body_start = offset
+    
+    # 3. Inputs (vin)
     input_count, size = read_varint(data, offset)
     offset += size
     inputs = []
@@ -73,12 +85,18 @@ def parse_transaction(data: bytes, offset: int):
         offset += 4
         script_len, size = read_varint(data, offset)
         offset += size
-        offset += script_len  # skip scriptSig
+        # scriptSig (is empty for many SegWit transactions, but not all)
+        script_sig = data[offset:offset+script_len]
+        offset += script_len
         sequence = struct.unpack("<I", data[offset:offset+4])[0]
         offset += 4
-        inputs.append({'prev_hash': prev_hash, 'prev_index': prev_index})
+        inputs.append({
+            'prev_hash': prev_hash, 
+            'prev_index': prev_index,
+            'sequence': sequence
+        })
 
-    # --- Outputs ---
+    # 4. Outputs (vout)
     output_count, size = read_varint(data, offset)
     offset += size
     outputs = []
@@ -90,34 +108,33 @@ def parse_transaction(data: bytes, offset: int):
         script_pubkey = data[offset:offset+script_len]
         offset += script_len
         outputs.append({'value': value, 'script_pubkey': script_pubkey})
+    
+    body_end = offset # This marks the end of legacy data
 
-    # --- Witness (skip) ---
+    # 5. Witness Data (Crucial for correct offset alignment)
+    # The witness is NOT part of the TXID but IS part of the total transaction size.
     if segwit:
-        for _ in inputs:
-            wit_count, size = read_varint(data, offset)
+        for _ in range(input_count):
+            # Each input has its own witness stack
+            wit_items_count, size = read_varint(data, offset)
             offset += size
-            for _ in range(wit_count):
+            for _ in range(wit_items_count):
                 item_len, size = read_varint(data, offset)
-                offset += size + item_len
+                offset += size
+                offset += item_len # skip the witness item content
 
-    # --- Locktime ---
-    locktime = struct.unpack("<I", data[offset:offset+4])[0]
+    # 6. Locktime (4 bytes) - Always at the end
+    locktime_bytes = data[offset:offset+4]
+    locktime = struct.unpack("<I", locktime_bytes)[0]
     offset += 4
 
-    # --- txid calculation ---
-    if segwit:
-        # remove marker+flag and witness bytes for txid
-        tx_bytes = bytearray()
-        tx_bytes += data[start:start+4]  # version
-        # inputs + outputs (skip marker+flag and witness)
-        in_start = start + 6  # version + marker + flag
-        tx_bytes += data[in_start:offset - 4]  # everything except locktime is included
-        tx_bytes += data[offset-4:offset]  # locktime
-        txid = double_sha256(tx_bytes)[::-1]
-    else:
-        txid = double_sha256(data[start:offset])[::-1]
+    # --- Calculations ---
+    
+    # TXID: Double SHA256 of [Version][Inputs][Outputs][Locktime]
+    legacy_serialization = version_bytes + data[body_start:body_end] + locktime_bytes
+    txid = double_sha256(legacy_serialization)[::-1]
 
-    # --- Coinbase detection ---
+    # Coinbase Check
     is_coinbase = (inputs[0]['prev_hash'] == b'\x00'*32 and inputs[0]['prev_index'] == 0xFFFFFFFF)
 
     return {
@@ -126,9 +143,11 @@ def parse_transaction(data: bytes, offset: int):
         'inputs': inputs,
         'outputs': outputs,
         'locktime': locktime,
-        'is_coinbase': is_coinbase
+        'is_coinbase': is_coinbase,
+        'segwit': segwit
     }, offset - start
 
+        
 # --- Bulk insertion ---
 def bulk_insert(cursor, blocks, txs, outputs, inputs):
     execute_values(cursor,
