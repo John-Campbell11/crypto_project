@@ -33,7 +33,6 @@ CREATE TABLE inputs (
     vin             INTEGER NOT NULL,          -- Input index
     prev_txid       BYTEA,                     -- Previous transaction (NULL for coinbase)
     prev_vout       INTEGER,                   -- Previous output index (NULL for coinbase)
-    script_sig      BYTEA,                     -- Input script
     PRIMARY KEY (txid, vin)
 );
 

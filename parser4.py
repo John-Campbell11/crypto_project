@@ -70,11 +70,10 @@ def parse_transaction(data: bytes, offset: int):
         offset += 4
         script_len, size = read_varint(data, offset)
         offset += size
-        script_sig = data[offset:offset+script_len]
-        offset += script_len
+        offset += script_len  # skip scriptSig entirely
         sequence = struct.unpack("<I", data[offset:offset+4])[0]
         offset += 4
-        inputs.append({'prev_hash': prev_hash, 'prev_index': prev_index, 'script_sig': script_sig, 'sequence': sequence})
+        inputs.append({'prev_hash': prev_hash, 'prev_index': prev_index})
 
     output_count, size = read_varint(data, offset)
     offset += size
@@ -91,7 +90,7 @@ def parse_transaction(data: bytes, offset: int):
 
     # SegWit: skip witness
     if segwit:
-        for inp in inputs:
+        for _ in inputs:
             wit_count, size = read_varint(data, offset)
             offset += size
             for _ in range(wit_count):
@@ -102,18 +101,14 @@ def parse_transaction(data: bytes, offset: int):
     offset += 4
 
     # Compute txid without witness
-    tx_end = offset
     if segwit:
-        # txid ignores marker+flag+wit
-        non_wit_tx = data[start:offset]
-        # remove marker + flag
-        non_wit_tx = data[start:start+4] + data[start+6:offset]
+        non_wit_tx = data[start:start+4] + data[start+6:offset]  # remove marker+flag
         txid = double_sha256(non_wit_tx)[::-1]
     else:
-        txid = double_sha256(data[start:tx_end])[::-1]
+        txid = double_sha256(data[start:offset])[::-1]
 
     is_coinbase = (inputs[0]['prev_hash'] == b'\x00'*32 and inputs[0]['prev_index'] == 0xFFFFFFFF)
-    return {'txid': txid, 'version': version, 'inputs': inputs, 'outputs': outputs, 'locktime': locktime, 'is_coinbase': is_coinbase}, tx_end-start
+    return {'txid': txid, 'version': version, 'inputs': inputs, 'outputs': outputs, 'locktime': locktime, 'is_coinbase': is_coinbase}, offset-start
 
 def bulk_insert(cursor, blocks, txs, outputs, inputs):
     execute_values(cursor,
@@ -125,11 +120,11 @@ def bulk_insert(cursor, blocks, txs, outputs, inputs):
         txs
     )
     execute_values(cursor,
-        "INSERT INTO outputs (txid, vout, value, script_pubkey, script_type, spent) VALUES %s ON CONFLICT (txid, vout) DO NOTHING",
+        "INSERT INTO outputs (txid, vout, value, script_pubkey, script_type) VALUES %s ON CONFLICT (txid, vout) DO NOTHING",
         outputs
     )
     execute_values(cursor,
-        "INSERT INTO inputs (txid, vin, prev_txid, prev_vout, script_sig) VALUES %s ON CONFLICT (txid, vin) DO NOTHING",
+        "INSERT INTO inputs (txid, vin, prev_txid, prev_vout) VALUES %s ON CONFLICT (txid, vin) DO NOTHING",
         inputs
     )
 
@@ -177,13 +172,10 @@ def process_dat_file(fpath, conn):
 
                 for vout, out in enumerate(tx['outputs']):
                     script_type = get_script_type(out['script_pubkey'])
-                    outputs_batch.append((tx['txid'], vout, out['value'], out['script_pubkey'], script_type, False))
+                    outputs_batch.append((tx['txid'], vout, out['value'], out['script_pubkey'], script_type))
 
                 for vin, inp in enumerate(tx['inputs']):
-                    if tx['is_coinbase']:
-                        inputs_batch.append((tx['txid'], vin, None, None, inp['script_sig']))
-                    else:
-                        inputs_batch.append((tx['txid'], vin, inp['prev_hash'][::-1], inp['prev_index'], inp['script_sig']))
+                    inputs_batch.append((tx['txid'], vin, inp['prev_hash'][::-1], inp['prev_index']))
 
             if len(blocks_batch) >= BATCH_SIZE:
                 bulk_insert(cursor, blocks_batch, txs_batch, outputs_batch, inputs_batch)
@@ -215,4 +207,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
