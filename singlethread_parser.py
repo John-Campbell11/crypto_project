@@ -10,7 +10,7 @@ import mmap
 # --- Configuration ---
 OBFUSCATION_KEY = bytes.fromhex("5ac1d292e7350efe")
 KEY_LENGTH = len(OBFUSCATION_KEY)
-BATCH_SIZE = 10000
+BATCH_SIZE = 50000
 DAT_DIR = "/home/btc-user/.bitcoin/blocks/"
 
 # --- DB Connection ---
@@ -265,7 +265,7 @@ def process_dat_file_fast(fpath, conn):
 
 # --- Main ---
 def main():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[:30]  # Adjust as needed
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[:30]
     conn = get_db_connection()
     total_blocks = 0
 
