@@ -25,8 +25,8 @@ def get_db_connection():
     # Optimize session for bulk insert
     cur = conn.cursor()
     cur.execute("SET synchronous_commit TO OFF")
-    cur.execute("SET work_mem TO '256MB'")
-    cur.execute("SET maintenance_work_mem TO '1GB'")
+    cur.execute("SET work_mem TO '512MB'")
+    cur.execute("SET maintenance_work_mem TO '2GB'")
     cur.close()
     return conn
 
