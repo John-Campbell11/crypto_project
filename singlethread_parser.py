@@ -1,3 +1,4 @@
+import time
 import psycopg2
 from psycopg2.extras import execute_values
 import struct
@@ -278,5 +279,9 @@ def main():
     print(f"Done. Total blocks imported: {total_blocks}")
 
 if __name__ == "__main__":
+    start_time = time.perf_counter()  # start timer
     main()
+    end_time = time.perf_counter()    # end timer
+    total_seconds = end_time - start_time
+    print(f"Total runtime: {total_seconds:.2f} seconds")
 
