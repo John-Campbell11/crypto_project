@@ -265,7 +265,7 @@ def process_dat_file_fast(fpath, conn):
 
 # --- Main ---
 def main():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[4000:4010]  # Adjust as needed
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "blk*.dat")))[:30]  # Adjust as needed
     conn = get_db_connection()
     total_blocks = 0
 
@@ -282,6 +282,9 @@ if __name__ == "__main__":
     start_time = time.perf_counter()  # start timer
     main()
     end_time = time.perf_counter()    # end timer
+    
     total_seconds = end_time - start_time
-    print(f"Total runtime: {total_seconds:.2f} seconds")
+    minutes = int(total_seconds / 60)
+    seconds = total_seconds % 60
+    print(f"Total runtime: {minutes} minutes {seconds:.2f} seconds")
 
