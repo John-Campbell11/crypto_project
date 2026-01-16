@@ -12,7 +12,7 @@ OBFUSCATION_KEY = bytes.fromhex("5ac1d292e7350efe")
 KEY_LENGTH = len(OBFUSCATION_KEY)
 BATCH_SIZE = 50000              # Increased batch size
 DAT_DIR = "/home/btc-user/.bitcoin/blocks/"
-PROGRESS_FILE = "progress.log"  # Tracks completed .dat files
+PROGRESS_FILE = "/home/btc-user/progress.log"  # Tracks completed .dat files
 
 # --- DB Connection ---
 def get_db_connection():
